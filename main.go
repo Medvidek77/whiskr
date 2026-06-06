@@ -37,6 +37,10 @@ func main() {
 	settings, err = LoadSettings()
 	log.MustFail(err)
 
+	log.Println("Initializing database...")
+	err = InitDB()
+	log.MustFail(err)
+
 	defer settings.Store()
 
 	err = StartModelUpdateLoop()
@@ -112,6 +116,9 @@ func main() {
 		gr.Post("/-/tokenize", HandleTokenize(tokenizer))
 		gr.Post("/-/preview", HandlePreview)
 		gr.Post("/-/image", HandleImage)
+
+		gr.Get("/-/sync", HandleSyncGet)
+		gr.Post("/-/sync", HandleSyncPost)
 
 		gr.Patch("/-/settings/{setting}", HandleUserSetting)
 	})
