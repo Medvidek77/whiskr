@@ -1,39 +1,106 @@
 import Dexie from "dexie";
 import "dexie-observable";
 
-const DatabaseName = "whiskr",
-	TableName = "kv";
+const DatabaseName = "whiskr";
 
-function isNull(value) {
-	return value === "" || value === null || value === undefined;
-}
+export let db;
 
 class StorageDB {
-	#database;
-	#scheduled = new Map();
-	#writes = new Map();
 	#cache = new Map();
 	#listeners = new Set();
-	#localSource = null;
+	#scheduled = new Map();
+	#writes = new Map();
 	#lastWrite = new Map();
 
 	async init() {
-		this.#database = new Dexie(DatabaseName);
-		this.#database.version(1).stores({
-			[TableName]: "&key",
+		db = new Dexie(DatabaseName);
+
+		db.version(1).stores({
+			kv: "&key",
 		});
 
-		await this.#database.open();
+		db.version(2).stores({
+			kv: "&key",
+			chats: "id, updated_at",
+			messages: "id, chat_id, updated_at, [chat_id+created_at]",
+			artifacts: "id, message_id, updated_at",
+			sync_log: "client_id",
+			outbox: "id++, type, entity_id, action"
+		}).upgrade(async tx => {
+			const kvTable = tx.table("kv");
+			const keys = await kvTable.toCollection().keys();
+			for (const key of keys) {
+				if (key.startsWith("chat-")) {
+					const chatData = (await kvTable.get(key))?.value;
+				}
+			}
+		});
 
-		this.#localSource = this.#resolveLocalSource();
+		await db.open();
+		await this.#loadKV();
 
-		this.#database.on("changes", changes => this.#handleChanges(changes));
-
-		await this.#load();
+		db.on("changes", changes => this.#handleChanges(changes));
+		this.#startSyncLoop();
 	}
 
-	#resolveLocalSource() {
-		return this.#database?._localSyncNode?.id || this.#database?._localSyncNode || this.#database?._localSyncNodeId || this.#database?._localSyncNodeID || null;
+	async #loadKV() {
+		const rows = await db.table("kv").toArray();
+		let total = 0;
+		rows.forEach(row => {
+			if (row.value !== "" && row.value !== null && row.value !== undefined) {
+				this.#cache.set(row.key, row.value);
+				total++;
+			}
+		});
+		console.info(`Loaded ${total} items from Dexie KV`);
+	}
+
+	async store(key, value = false) {
+		const isNull = value === "" || value === null || value === undefined;
+		if (isNull) {
+			this.#cache.delete(key);
+		} else {
+			this.#cache.set(key, value);
+		}
+		this.#lastWrite.set(key, Date.now());
+		await this.#scheduleKV(key);
+	}
+
+	async #scheduleKV(key) {
+		if (this.#scheduled.has(key)) return;
+		this.#scheduled.set(key, true);
+		await new Promise(resolve => setTimeout(resolve, 500));
+		this.#scheduled.delete(key);
+
+		if (this.#writes.has(key)) {
+			await this.#scheduleKV(key);
+			return;
+		}
+
+		this.#writes.set(key, true);
+		try {
+			const value = this.#cache.get(key);
+			const isNull = value === "" || value === null || value === undefined;
+			if (isNull) {
+				await db.table("kv").delete(key);
+			} else {
+				await db.table("kv").put({ key: key, value: value, updatedAt: Date.now() });
+			}
+		} catch (error) {
+			console.error(`Failed to write to Dexie KV: ${error}`);
+		} finally {
+			this.#writes.delete(key);
+		}
+	}
+
+	load(key, fallback = false) {
+		if (!this.#cache.has(key)) return fallback;
+		return this.#cache.get(key);
+	}
+
+	onChange(listener) {
+		this.#listeners.add(listener);
+		return () => this.#listeners.delete(listener);
 	}
 
 	#emitChange(change) {
@@ -43,193 +110,135 @@ class StorageDB {
 	}
 
 	#handleChanges(changes) {
-		this.#localSource ||= this.#resolveLocalSource();
-
 		for (const change of changes) {
-			if (change.table !== TableName) {
-				continue;
+			if (change.table === "kv") {
+				const key = change.key,
+					value = change.obj?.value ?? null,
+					updatedAt = change.obj?.updatedAt ?? null;
+
+				let isLocal = false;
+				if (key && this.#lastWrite.has(key)) {
+					const age = Date.now() - this.#lastWrite.get(key);
+					if (age < 1500) isLocal = true;
+				}
+
+				this.#emitChange({
+					key: key,
+					value: value,
+					updatedAt: updatedAt,
+					type: change.type,
+					isLocal: isLocal,
+				});
+			} else if (["chats", "messages", "artifacts"].includes(change.table)) {
+				if (!change.obj?._fromSync) {
+					this.#queueSync(change.table, change.key, change.type);
+				}
 			}
+		}
+	}
 
-			const key = change.key,
-				value = change.obj?.value ?? null,
-				updatedAt = change.obj?.updatedAt ?? null;
+	async #queueSync(table, id, type) {
+		await db.table("outbox").put({
+			type: table,
+			entity_id: id,
+			action: type
+		});
+	}
 
-			let isLocal = this.#localSource && change.source === this.#localSource;
+	async #startSyncLoop() {
+		setInterval(() => this.sync(), 10000);
+		setTimeout(() => this.sync(), 2000);
+	}
 
-			if (!isLocal && key && this.#lastWrite.has(key)) {
-				const age = Date.now() - this.#lastWrite.get(key);
+	async sync() {
+		if (!navigator.onLine) return;
+		try {
+			const outboxItems = await db.table("outbox").toArray();
+			if (outboxItems.length > 0) {
+				const payload = {
+					client_id: this.#getClientId(),
+					chats: [],
+					messages: [],
+					artifacts: []
+				};
 
-				if (age < 1500) {
-					isLocal = true;
+				for (const item of outboxItems) {
+					if (item.action === 3) continue;
+					const entity = await db.table(item.type).get(item.entity_id);
+					if (entity) {
+						const { _fromSync, ...cleanEntity } = entity;
+						payload[item.type].push(cleanEntity);
+					}
+				}
+
+				if (payload.chats.length > 0 || payload.messages.length > 0 || payload.artifacts.length > 0) {
+					const response = await fetch("/-/sync", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(payload)
+					});
+					if (response.ok) {
+						const ids = outboxItems.map(i => i.id);
+						await db.table("outbox").bulkDelete(ids);
+					}
 				}
 			}
 
-			this.#emitChange({
-				key: key,
-				value: value,
-				updatedAt: updatedAt,
-				type: change.type,
-				isLocal: !!isLocal,
-			});
-		}
-	}
-
-	async #load() {
-		const rows = await this.#database.table(TableName).toArray();
-		let total = 0;
-
-		rows.forEach(row => {
-			if (!isNull(row.value)) {
-				this.#cache.set(row.key, row.value);
-				total++;
-			}
-		});
-
-		console.info(`Loaded ${total} items from Dexie`);
-	}
-
-	async #write(key, retry) {
-		if (this.#writes.has(key)) {
-			if (retry) {
-				await this.#schedule(key);
-			}
-
-			return;
-		}
-
-		this.#writes.set(key, true);
-
-		try {
-			const value = this.#cache.get(key);
-
-			if (isNull(value)) {
-				await this.#database.table(TableName).delete(key);
-			} else {
-				await this.#database.table(TableName).put({
-					key: key,
-					value: value,
-					updatedAt: Date.now(),
+			const syncLog = await db.table("sync_log").get("local") || { last_sync: 0 };
+			const pullResponse = await fetch(`/-/sync?since=${syncLog.last_sync}`);
+			if (pullResponse.ok) {
+				const data = await pullResponse.json();
+				await db.transaction("rw", db.chats, db.messages, db.artifacts, db.sync_log, async () => {
+					if (data.chats.length > 0) await db.chats.bulkPut(data.chats.map(c => ({...c, _fromSync: true})));
+					if (data.messages.length > 0) await db.messages.bulkPut(data.messages.map(m => ({...m, _fromSync: true})));
+					if (data.artifacts.length > 0) await db.artifacts.bulkPut(data.artifacts.map(a => ({...a, _fromSync: true})));
+					await db.sync_log.put({ client_id: "local", last_sync: data.timestamp });
 				});
 			}
 		} catch (error) {
-			console.error(`Failed to write to Dexie: ${error}`);
-		} finally {
-			this.#writes.delete(key);
+			console.error("Sync failed:", error);
 		}
 	}
 
-	#wait(ms) {
-		return new Promise(resolve => setTimeout(resolve, ms));
-	}
-
-	async #schedule(key) {
-		if (this.#scheduled.has(key)) {
-			return;
+	#getClientId() {
+		let id = this.load("client_id");
+		if (!id) {
+			id = crypto.randomUUID();
+			this.store("client_id", id);
 		}
-
-		this.#scheduled.set(key, true);
-
-		await this.#wait(500);
-
-		this.#scheduled.delete(key);
-
-		await this.#write(key, true);
-	}
-
-	async store(key, value = false) {
-		if (isNull(value)) {
-			this.#cache.delete(key);
-		} else {
-			this.#cache.set(key, value);
-		}
-
-		this.#lastWrite.set(key, Date.now());
-
-		await this.#schedule(key);
-	}
-
-	async refresh(keys = []) {
-		if (!keys.length) {
-			return new Map();
-		}
-
-		const table = this.#database.table(TableName),
-			results = new Map();
-
-		for (const key of keys) {
-			const row = await table.get(key);
-
-			if (row && !isNull(row.value)) {
-				this.#cache.set(key, row.value);
-
-				results.set(key, row.value);
-			} else {
-				this.#cache.delete(key);
-
-				results.set(key, null);
-			}
-		}
-
-		return results;
-	}
-
-	onChange(listener) {
-		this.#listeners.add(listener);
-
-		return () => this.#listeners.delete(listener);
-	}
-
-	load(key, fallback = false) {
-		if (!this.#cache.has(key)) {
-			return fallback;
-		}
-
-		return this.#cache.get(key);
+		return id;
 	}
 }
 
-let db;
+let storageDB;
 
 export async function connectDB() {
-	if (db) {
-		return;
-	}
-
-	const newDB = new StorageDB();
-
-	await newDB.init();
-
-	db = newDB;
+	if (storageDB) return;
+	storageDB = new StorageDB();
+	await storageDB.init();
 }
 
 export function store(key, value = false) {
-	if (!db) {
-		return;
-	}
-
-	db.store(key, value);
+	if (!storageDB) return;
+	storageDB.store(key, value);
 }
 
 export function load(key, fallback = false) {
-	if (!db) {
-		return fallback;
-	}
-
-	return db.load(key, fallback);
+	if (!storageDB) return fallback;
+	return storageDB.load(key, fallback);
 }
 
 export function onChange(listener) {
-	if (!db) {
-		return () => {};
-	}
-
-	return db.onChange(listener);
+	if (!storageDB) return () => {};
+	return storageDB.onChange(listener);
 }
 
 export async function refresh(keys = []) {
-	if (!db) {
-		return new Map();
-	}
+	return new Map();
+}
 
-	return db.refresh(keys);
+export function uuidv4() {
+  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+  );
 }

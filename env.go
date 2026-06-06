@@ -57,6 +57,23 @@ type EnvAuthentication struct {
 	Users   []*EnvUser `yaml:"users"`
 }
 
+type EnvSearchSummarization struct {
+	Enabled            bool   `yaml:"enabled"`
+	Model              string `yaml:"model"`
+	MaxTokensPerResult int    `yaml:"max_tokens_per_result"`
+}
+
+type EnvSearchContentTrimming struct {
+	MaxChars int `yaml:"max_chars"`
+}
+
+type EnvSearch struct {
+	SearXNGUrl      string                   `yaml:"searxng_url"`
+	MaxResults      int                      `yaml:"max_results"`
+	Summarization   EnvSearchSummarization   `yaml:"summarization"`
+	ContentTrimming EnvSearchContentTrimming `yaml:"content_trimming"`
+}
+
 type Environment struct {
 	dmx sync.RWMutex // data mutex
 	fmx sync.Mutex   // file mutex
@@ -68,11 +85,12 @@ type Environment struct {
 	Models         EnvModels         `yaml:"models"`
 	UI             EnvUI             `yaml:"ui"`
 	Authentication EnvAuthentication `yaml:"authentication"`
+	Search         EnvSearch         `yaml:"search"`
 }
 
 func LoadEnv() (*Environment, error) {
 	// defaults
-	cfg := &Environment{
+		cfg := &Environment{
 		Server: EnvServer{
 			Port: 3443,
 		},
@@ -83,6 +101,17 @@ func LoadEnv() (*Environment, error) {
 		},
 		Models: EnvModels{
 			ImageGeneration: true,
+		},
+		Search: EnvSearch{
+			MaxResults: 10,
+			Summarization: EnvSearchSummarization{
+				Enabled:            true,
+				Model:              "google/gemini-2.5-flash-lite",
+				MaxTokensPerResult: 200,
+			},
+			ContentTrimming: EnvSearchContentTrimming{
+				MaxChars: 1500,
+			},
 		},
 	}
 
@@ -234,6 +263,7 @@ func (e *Environment) Store() error {
 			"$.models":         {yaml.HeadComment("")},
 			"$.ui":             {yaml.HeadComment("")},
 			"$.authentication": {yaml.HeadComment("")},
+			"$.search":         {yaml.HeadComment("")},
 
 			"$.tokens.secret":     {yaml.HeadComment(" server secret for signing auth tokens; auto-generated if empty")},
 			"$.tokens.openrouter": {yaml.HeadComment(" openrouter.ai api token (required)")},
@@ -255,6 +285,11 @@ func (e *Environment) Store() error {
 
 			"$.authentication.enabled": {yaml.HeadComment(" require login with username and password")},
 			"$.authentication.users":   {yaml.HeadComment(" list of users with bcrypt password hashes")},
+
+			"$.search.searxng_url":                           {yaml.HeadComment(" SearXNG instance URL (e.g., http://localhost:8888)")},
+			"$.search.max_results":                           {yaml.HeadComment(" maximum number of search results (default 10)")},
+			"$.search.summarization.enabled":                 {yaml.HeadComment(" summarize search results using an LLM")},
+			"$.search.content_trimming.max_chars":            {yaml.HeadComment(" truncate raw content before summarization")},
 		}
 	)
 

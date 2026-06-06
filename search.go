@@ -30,52 +30,40 @@ type GitHubRepositoryArguments struct {
 }
 
 func GetSearchTools() []openrouter.Tool {
-	return []openrouter.Tool{
-		{
-			Type: openrouter.ToolTypeFunction,
-			Function: &openrouter.FunctionDefinition{
-				Name:        "search_web",
-				Description: "Search the live web via Exa. Returns highly relevant highlights and text snippets.",
-				Parameters: map[string]any{
-					"type":     "object",
-					"required": []string{"query"},
-					"properties": map[string]any{
-						"query": map[string]any{
-							"type":        "string",
-							"description": "A concise, specific search query. Focus on core entities and keywords.",
-						},
-						"num_results": map[string]any{
-							"type":        "integer",
-							"description": "Number of results to return (3-12). Default is 6.",
-							"minimum":     3,
-							"maximum":     12,
-						},
-						"intent": map[string]any{
-							"type":        "string",
-							"enum":        []string{"auto", "news", "docs", "papers", "code", "deep_read"},
-							"description": "Category filter. 'news' (recent events), 'docs' (official documentation), 'papers' (academic), 'code' (GitHub), 'deep_read' (fetches full page text instead of just highlights). Default 'auto'.",
-						},
-						"start_date": map[string]any{
-							"type":        "string",
-							"description": "Filter results published AFTER this date (YYYY-MM-DD).",
-						},
-						"end_date": map[string]any{
-							"type":        "string",
-							"description": "Filter results published BEFORE this date (YYYY-MM-DD).",
-						},
-						"domains": map[string]any{
-							"type": "array",
-							"items": map[string]any{
-								"type": "string",
-							},
-							"description": "Restrict search to these specific website domains (e.g., ['europa.eu', 'who.int']).",
-						},
+	var tools []openrouter.Tool
+
+	tools = append(tools, openrouter.Tool{
+		Type: openrouter.ToolTypeFunction,
+		Function: &openrouter.FunctionDefinition{
+			Name:        "search_web",
+			Description: "Search the live web. Returns highly relevant highlights and text snippets.",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"query"},
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "A concise, specific search query. Focus on core entities and keywords.",
 					},
-					"additionalProperties": false,
+					"num_results": map[string]any{
+						"type":        "integer",
+						"description": "Number of results to return (3-12). Default is 6.",
+						"minimum":     3,
+						"maximum":     12,
+					},
+					"intent": map[string]any{
+						"type":        "string",
+						"enum":        []string{"auto", "news", "docs", "papers", "code", "deep_read"},
+						"description": "Category filter.",
+					},
 				},
+				"additionalProperties": false,
 			},
 		},
-		{
+	})
+
+	if env.Tokens.Exa != "" {
+		tools = append(tools, openrouter.Tool{
 			Type: openrouter.ToolTypeFunction,
 			Function: &openrouter.FunctionDefinition{
 				Name:        "fetch_contents",
@@ -98,34 +86,41 @@ func GetSearchTools() []openrouter.Tool {
 				},
 				Strict: true,
 			},
-		},
-		{
-			Type: openrouter.ToolTypeFunction,
-			Function: &openrouter.FunctionDefinition{
-				Name:        "github_repository",
-				Description: "Fetch repository metadata and README from GitHub.",
-				Parameters: map[string]any{
-					"type":     "object",
-					"required": []string{"owner", "repo"},
-					"properties": map[string]any{
-						"owner": map[string]any{
-							"type":        "string",
-							"description": "Repository owner (e.g., 'torvalds').",
-						},
-						"repo": map[string]any{
-							"type":        "string",
-							"description": "Repository name (e.g., 'linux').",
-						},
-					},
-					"additionalProperties": false,
-				},
-				Strict: true,
-			},
-		},
+		})
 	}
+
+	tools = append(tools, openrouter.Tool{
+		Type: openrouter.ToolTypeFunction,
+		Function: &openrouter.FunctionDefinition{
+			Name:        "github_repository",
+			Description: "Fetch repository metadata and README from GitHub.",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"owner", "repo"},
+				"properties": map[string]any{
+					"owner": map[string]any{
+						"type":        "string",
+						"description": "Repository owner (e.g., 'torvalds').",
+					},
+					"repo": map[string]any{
+						"type":        "string",
+						"description": "Repository name (e.g., 'linux').",
+					},
+				},
+				"additionalProperties": false,
+			},
+			Strict: true,
+		},
+	})
+
+	return tools
 }
 
 func HandleSearchWebTool(ctx context.Context, tool *ChatToolCall, arguments *SearchWebArguments) error {
+	if env.Search.SearXNGUrl != "" {
+		return HandleSearXNGSearchTool(ctx, tool, arguments)
+	}
+
 	if arguments.Query == "" {
 		return errors.New("no search query")
 	}
@@ -133,7 +128,6 @@ func HandleSearchWebTool(ctx context.Context, tool *ChatToolCall, arguments *Sea
 	results, err := ExaRunSearch(ctx, arguments)
 	if err != nil {
 		tool.Result = fmt.Sprintf("error: %v", err)
-
 		return nil
 	}
 
@@ -141,7 +135,6 @@ func HandleSearchWebTool(ctx context.Context, tool *ChatToolCall, arguments *Sea
 
 	if len(results.Results) == 0 {
 		tool.Result = "error: no search results"
-
 		return nil
 	}
 
