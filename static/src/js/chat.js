@@ -3137,7 +3137,8 @@ function restore() {
 
 	$message.value = load("message", "");
 	$role.value = load("role", "user");
-	$model.value = load("model", modelList.length ? modelList[0].id : "");
+	const lastUsed = load("last-used-model");
+	$model.value = load("model", lastUsed && modelList.some(m => m.id === lastUsed) ? lastUsed : (modelList.length ? modelList[0].id : ""));
 	$prompt.value = load("prompt", promptList.length ? promptList[0].key : "");
 	$temperature.value = load("temperature", 0.85);
 	$iterations.value = load("iterations", 3);

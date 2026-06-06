@@ -2392,6 +2392,8 @@ input.invalid {
 
 #search.on {
 	background-color: var(--c-green);
+
+	background-color: var(--c-green);
 	mask-image: url(icons/search-on.svg);
 }
 
@@ -2663,8 +2665,13 @@ input.invalid {
 	#chat {
 		height: auto !important;
 		min-height: auto;
-		padding: 8px;
-		margin-bottom: max(0px, env(safe-area-inset-bottom));
+		padding: 8px 12px;
+		margin-bottom: max(10px, env(safe-area-inset-bottom));
+		background: transparent !important;
+	}
+
+	#chat::after {
+		display: none;
 	}
 
 	#message {
@@ -2682,18 +2689,18 @@ input.invalid {
 	}
 
 	#add, #send {
-		bottom: 16px;
+		bottom: 24px;
 		min-width: 38px;
 		min-height: 38px;
 		z-index: 10;
 	}
 
 	#add {
-		right: 60px;
+		right: 64px;
 	}
 
 	#send {
-		right: 16px;
+		right: 20px;
 	}
 
 	#header {
