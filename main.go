@@ -79,7 +79,7 @@ func main() {
 			"authenticated": IsAuthenticated(r),
 			"config": map[string]any{
 				"auth":   env.Authentication.Enabled,
-				"search": env.Tokens.Exa != "",
+				"search": env.Tokens.Exa != "" || env.Search.SearXNGUrl != "",
 				"motion": env.UI.ReducedMotion,
 				"images": env.Models.ImageGeneration,
 				"title":  env.Models.TitleModel != "-",
