@@ -2392,6 +2392,8 @@ input.invalid {
 
 #search.on {
 	background-color: var(--c-green);
+
+	background-color: var(--c-green);
 	mask-image: url(icons/search-on.svg);
 }
 
@@ -2653,10 +2655,77 @@ input.invalid {
 		width: 100%;
 		min-width: auto;
 		max-width: 100%;
+		padding: 10px 14px;
 	}
 
 	.statistics {
 		flex-wrap: wrap;
+	}
+
+	#chat {
+		height: auto !important;
+		min-height: auto;
+		padding: 8px 12px;
+		margin-bottom: max(10px, env(safe-area-inset-bottom));
+		background: transparent !important;
+	}
+
+	#chat::after {
+		display: none;
+	}
+
+	#message {
+		border-radius: 12px;
+		min-height: 80px;
+		max-height: 40vh;
+		padding: 12px;
+		padding-bottom: 50px;
+		border: 1px solid var(--c-surface1);
+		background: var(--c-crust);
+	}
+
+	#resize-bar {
+		display: none;
+	}
+
+	#add, #send {
+		bottom: 24px;
+		min-width: 38px;
+		min-height: 38px;
+		z-index: 10;
+	}
+
+	#add {
+		right: 64px;
+	}
+
+	#send {
+		right: 20px;
+	}
+
+	#header {
+		margin-bottom: 8px;
+	}
+
+	.options {
+		overflow-x: auto;
+		flex-wrap: nowrap;
+		scrollbar-width: none;
+		margin-bottom: 12px;
+		padding-bottom: 4px;
+	}
+
+	.options::-webkit-scrollbar {
+		display: none;
+	}
+
+	.option select, .option input {
+		min-height: 44px;
+	}
+
+	.option button {
+		min-height: 44px;
+		min-width: 44px;
 	}
 }
 
@@ -2675,16 +2744,34 @@ input.invalid {
 		width: 0;
 	}
 
+	#sidebar.open {
+		box-shadow: 0 0 0 100vw rgba(0,0,0,0.5);
+	}
+
 	#sidebar.open ~ #sidebar-trigger {
 		left: 0;
 		z-index: 36;
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	#sidebar-trigger {
-		display: none;
+		top: 12px;
+		left: 12px;
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		background-color: var(--c-surface0);
+		box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+	}
+
+	#sidebar-trigger:hover {
+		width: 44px;
+		height: 44px;
 	}
 
 	#page {
+		padding-top: 48px;
 		margin-left: 0;
 	}
 

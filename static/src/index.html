@@ -9,6 +9,9 @@
 		<link href="https://fonts.googleapis.com/css2?family=Work+Sans:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet" />
 
 		<title>whiskr</title>
+		<link rel="manifest" href="/manifest.json" />
+		<link rel="apple-touch-icon" href="/logo.png" />
+		<meta name="theme-color" content="#1e1e2e" />
 	</head>
 	<body class="loading">
 		<div id="floaters"></div>
@@ -291,5 +294,16 @@
 				</div>
 			</div>
 		</div>
+			<script>
+			if ('serviceWorker' in navigator) {
+				window.addEventListener('load', () => {
+					navigator.serviceWorker.register('/sw.js').then(registration => {
+						console.log('SW registered: ', registration);
+					}).catch(registrationError => {
+						console.log('SW registration failed: ', registrationError);
+					});
+				});
+			}
+		</script>
 	</body>
 </html>

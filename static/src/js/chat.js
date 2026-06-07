@@ -3124,7 +3124,7 @@ function clearMessages() {
 	updateChatTokens();
 }
 
-function restore() {
+function restoreGlobalSettings() {
 	const resizedHeight = load("resized");
 
 	if (resizedHeight) {
@@ -3137,7 +3137,8 @@ function restore() {
 
 	$message.value = load("message", "");
 	$role.value = load("role", "user");
-	$model.value = load("model", modelList.length ? modelList[0].id : "");
+	const lastUsed = load("last-used-model");
+	$model.value = load("model", lastUsed && modelList.some(m => m.id === lastUsed) ? lastUsed : (modelList.length ? modelList[0].id : ""));
 	$prompt.value = load("prompt", promptList.length ? promptList[0].key : "");
 	$temperature.value = load("temperature", 0.85);
 	$iterations.value = load("iterations", 3);
@@ -3778,197 +3779,174 @@ function toggleSidebar() {
 	store("sidebar-open", $sidebar.classList.contains("open"));
 }
 
-function getSavedChats() {
-	return load("saved-chats", []);
+async function getSavedChats() {
+	return await import("./chat_db.js").then(m => m.getChats()).catch(() => []);
 }
 
-function saveChatToStorage(name, skipConfirm = false) {
+async function saveChatToStorage(name, skipConfirm = false) {
 	name = name?.trim();
-
 	if (!name) {
 		notify("Please enter a name for the chat", "warning");
-
 		return false;
 	}
 
-	const chatData = getChatData(name),
-		savedChats = getSavedChats(),
-		existingIndex = savedChats.findIndex(chat => chat.name === name);
+	const { saveChat, saveMessage } = await import("./chat_db.js");
+	const { uuidv4 } = await import("./storage.js");
+	const savedChats = await getSavedChats();
+	const existingChat = savedChats.find(c => c.title === name);
 
-	if (existingIndex === -1) {
-		savedChats.push({
-			name: name,
-			data: chatData,
-		});
-	} else {
-		if (!skipConfirm && !confirm(`A chat named "${name}" already exists. Overwrite?`)) {
-			return false;
-		}
+	let chatId = existingChat ? existingChat.id : uuidv4();
 
-		savedChats[existingIndex] = {
-			name: name,
-			data: chatData,
-		};
+	if (existingChat && !skipConfirm && !confirm(`A chat named "${name}" already exists. Overwrite?`)) {
+		return false;
 	}
 
-	store("saved-chats", savedChats);
+	const chatData = getChatData(name);
 
-	renderSavedChats();
+	await saveChat({
+		id: chatId,
+		title: name,
+		model: chatData.model,
+		system_prompt: chatData.prompt,
+	});
+
+	for (const msgData of chatData.messages) {
+		const message = {
+			id: msgData.id,
+			chat_id: chatId,
+			role: msgData.role,
+			content: msgData.content || msgData.text || "",
+			tokens: msgData.tokens || 0,
+			timestamp: msgData.timestamp || Date.now()
+		};
+		if (!message.id) {
+			message.id = uuidv4();
+			msgData.id = message.id; // Assign back so we don't lose it in currentMsgIds
+		}
+		await saveMessage(message);
+	}
+
+	const { db } = await import("./storage.js");
+	const currentMsgIds = chatData.messages.map(m => m.id).filter(Boolean);
+	const oldMsgs = await db.messages.where("chat_id").equals(chatId).toArray();
+	const toDelete = oldMsgs.filter(m => !currentMsgIds.includes(m.id)).map(m => m.id);
+	if (toDelete.length > 0) await db.messages.bulkDelete(toDelete);
+
+	currentChatId = chatId;
+	await renderSavedChats();
 
 	notify(`Chat "${name}" saved`, "success");
-
 	return true;
 }
 
-function loadChatFromStorage(name) {
-	const savedChats = getSavedChats(),
-		savedChat = savedChats.find(chat => chat.name === name);
+async function loadChatFromStorage(id) {
+	const { getChat, getMessages } = await import("./chat_db.js");
+	const savedChat = await getChat(id);
 
 	if (!savedChat) {
-		notify(`Chat "${name}" not found`, "error");
-
+		notify(`Chat not found`, "error");
 		return;
 	}
 
-	const data = savedChat.data;
+	const messagesData = await getMessages(id);
 
 	clearMessages();
 
-	// restore all state
-	chatTitle = data.title;
-	chatFilename = data.file;
+	currentChatId = id;
+	chatTitle = savedChat.title;
 
-	store("title", data.title);
-	store("file", data.file);
-	store("message", data.message);
-	store("attachments", data.attachments);
-	store("role", data.role);
-	store("model", data.model);
-	store("prompt", data.prompt);
-	store("temperature", data.temperature);
-	store("iterations", data.iterations);
-	store("provider", data.provider);
-	store("image-resolution", data.image?.resolution);
-	store("image-resize", data.image?.resize);
-	store("image-aspect", data.image?.aspect);
-	store("reasoning-effort", data.reasoning?.effort);
-	store("reasoning-tokens", data.reasoning?.tokens);
-	store("time-override", data.time || "");
-	store("json", data.json);
-	store("search", data.search);
-	store("messages", data.messages);
+	restoreGlobalSettings();
 
-	restore();
+	if (savedChat.model) $model.value = savedChat.model;
+	if (savedChat.system_prompt) $prompt.value = savedChat.system_prompt;
+
+	$model.dispatchEvent(new Event("change"));
+
+	const mappedMessages = messagesData.map(m => ({
+		id: m.id,
+		role: m.role,
+		text: m.content
+	}));
+
+	importMessages(mappedMessages);
 
 	closeSidebar();
+	chatTitleEnabled = true;
+	updateTitle();
 
-	notify(`Loaded chat "${name}"`, "success");
+	notify(`Loaded chat "${savedChat.title}"`, "success");
 }
 
-function deleteChatFromStorage(name) {
-	const savedChats = getSavedChats(),
-		filtered = savedChats.filter(chat => chat.name !== name);
-
-	store("saved-chats", filtered);
-
-	renderSavedChats();
-
-	notify(`Deleted chat "${name}"`, "success");
+async function deleteChatFromStorage(id) {
+	if (!confirm(`Are you sure you want to delete this chat?`)) {
+		return;
+	}
+	const { deleteChat } = await import("./chat_db.js");
+	await deleteChat(id);
+	await renderSavedChats();
+	notify(`Deleted chat`, "success");
 }
 
-function renderSavedChats() {
-	const savedChats = getSavedChats();
-
+async function renderSavedChats() {
+	const savedChats = await getSavedChats();
 	$savedChatsList.innerHTML = "";
 
-	if (savedChats.length === 0) {
+	const visibleChats = savedChats.filter(c => !c.deleted);
+
+	if (visibleChats.length === 0) {
 		const empty = make("div", "empty-state");
-
 		empty.textContent = "No saved chats yet";
-
 		$savedChatsList.appendChild(empty);
-
 		return;
 	}
 
-	// sort by saved date, newest first
-	const sorted = [...savedChats].sort((a, b) => (b.data.savedAt || 0) - (a.data.savedAt || 0));
+	const sorted = [...visibleChats].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
 
 	for (const chat of sorted) {
-		// main item
 		const item = make("div", "saved-chat-item");
-
-		// info wrapper
 		const info = make("div", "chat-info");
-
-		// name
 		const name = make("div", "chat-name");
-
-		name.textContent = chat.name;
-
+		name.textContent = chat.title || "Untitled";
 		info.appendChild(name);
 
-		// meta
-		const meta = make("div", "chat-date"),
-			date = chat.data.savedAt ? new Date(chat.data.savedAt).toLocaleDateString() : "Unknown date",
-			messageCount = chat.data.messages?.length || 0;
-
-		meta.textContent = `${date} - ${messageCount} messages`;
-
+		const meta = make("div", "chat-date");
+		const date = chat.updated_at ? new Date(chat.updated_at).toLocaleDateString() : "Unknown date";
+		meta.textContent = `${date}`;
 		info.appendChild(meta);
 
-		// actions wrapper
 		const actions = make("div", "chat-actions");
 
-		// load chat
 		const loadBtn = make("button", "load-chat");
-
 		loadBtn.title = "Load this chat";
-
 		loadBtn.addEventListener("click", event => {
 			event.stopPropagation();
-
-			loadChatFromStorage(chat.name);
+			loadChatFromStorage(chat.id);
 		});
-
 		actions.appendChild(loadBtn);
 
-		// overwrite chat
 		const overwriteBtn = make("button", "overwrite-chat");
-
 		overwriteBtn.title = "Overwrite with current chat";
-
 		overwriteBtn.addEventListener("click", event => {
 			event.stopPropagation();
-
-			if (confirm(`Overwrite saved chat "${chat.name}" with current chat state?`)) {
-				saveChatToStorage(chat.name, true);
+			if (confirm(`Overwrite saved chat "${chat.title}" with current chat state?`)) {
+				saveChatToStorage(chat.title, true);
 			}
 		});
-
 		actions.appendChild(overwriteBtn);
 
-		// delete chat
 		const deleteBtn = make("button", "delete-chat");
-
 		deleteBtn.title = "Delete this chat";
-
 		deleteBtn.addEventListener("click", event => {
 			event.stopPropagation();
-
-			if (confirm(`Delete saved chat "${chat.name}"?`)) {
-				deleteChatFromStorage(chat.name);
-			}
+			deleteChatFromStorage(chat.id);
 		});
-
 		actions.appendChild(deleteBtn);
 
-		// append
 		item.appendChild(info);
 		item.appendChild(actions);
 
-		item.addEventListener("click", () => {
-			loadChatFromStorage(chat.name);
+        item.addEventListener("click", () => {
+			loadChatFromStorage(chat.id);
 		});
 
 		$savedChatsList.appendChild(item);
@@ -4075,6 +4053,7 @@ $model.addEventListener("change", () => {
 		tags = data?.tags || [];
 
 	store("model", model);
+	store("last-used-model", model);
 
 	if (data?.reasoning) {
 		$reasoningEffort.parentNode.classList.remove("none");
@@ -4393,7 +4372,7 @@ $import?.addEventListener("click", async () => {
 		store("messages", data.messages),
 	]);
 
-	restore();
+	restoreGlobalSettings();
 
 	closeSidebar();
 });
@@ -4416,6 +4395,7 @@ $scrolling.addEventListener("click", () => {
 });
 
 $send.addEventListener("click", () => {
+	store("last-used-model", $model.value);
 	generate(true);
 });
 
@@ -4626,7 +4606,7 @@ dropdown($exportFormat);
 exportRolesDropdown = dropdown($exportRoles);
 
 loadData().then(() => {
-	restore();
+	restoreGlobalSettings();
 
 	document.body.classList.remove("loading");
 

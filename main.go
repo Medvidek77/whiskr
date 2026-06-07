@@ -37,6 +37,10 @@ func main() {
 	settings, err = LoadSettings()
 	log.MustFail(err)
 
+	log.Println("Initializing database...")
+	err = InitDB()
+	log.MustFail(err)
+
 	defer settings.Store()
 
 	err = StartModelUpdateLoop()
@@ -75,7 +79,7 @@ func main() {
 			"authenticated": IsAuthenticated(r),
 			"config": map[string]any{
 				"auth":   env.Authentication.Enabled,
-				"search": env.Tokens.Exa != "",
+				"search": env.Tokens.Exa != "" || env.Search.SearXNGUrl != "",
 				"motion": env.UI.ReducedMotion,
 				"images": env.Models.ImageGeneration,
 				"title":  env.Models.TitleModel != "-",
@@ -112,6 +116,9 @@ func main() {
 		gr.Post("/-/tokenize", HandleTokenize(tokenizer))
 		gr.Post("/-/preview", HandlePreview)
 		gr.Post("/-/image", HandleImage)
+
+		gr.Get("/-/sync", HandleSyncGet)
+		gr.Post("/-/sync", HandleSyncPost)
 
 		gr.Patch("/-/settings/{setting}", HandleUserSetting)
 	})
