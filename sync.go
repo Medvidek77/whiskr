@@ -113,7 +113,7 @@ func HandleSyncPost(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	stmtChat, _ := tx.Prepare(`
+	stmtChat, err := tx.Prepare(`
 		INSERT INTO chats (id, title, model, system_prompt, created_at, updated_at, deleted)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -125,12 +125,19 @@ func HandleSyncPost(w http.ResponseWriter, r *http.Request) {
 			deleted=excluded.deleted
 		WHERE excluded.updated_at > chats.updated_at
 	`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	defer stmtChat.Close()
 	for _, c := range req.Chats {
-		stmtChat.Exec(c.ID, c.Title, c.Model, c.SystemPrompt, c.CreatedAt, c.UpdatedAt, c.Deleted)
+		if _, err := stmtChat.Exec(c.ID, c.Title, c.Model, c.SystemPrompt, c.CreatedAt, c.UpdatedAt, c.Deleted); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
-	stmtMsg, _ := tx.Prepare(`
+	stmtMsg, err := tx.Prepare(`
 		INSERT INTO messages (id, chat_id, role, content, tokens, timestamp, created_at, updated_at, deleted)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -144,12 +151,19 @@ func HandleSyncPost(w http.ResponseWriter, r *http.Request) {
 			deleted=excluded.deleted
 		WHERE excluded.updated_at > messages.updated_at
 	`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	defer stmtMsg.Close()
 	for _, m := range req.Messages {
-		stmtMsg.Exec(m.ID, m.ChatID, m.Role, m.Content, m.Tokens, m.Timestamp, m.CreatedAt, m.UpdatedAt, m.Deleted)
+		if _, err := stmtMsg.Exec(m.ID, m.ChatID, m.Role, m.Content, m.Tokens, m.Timestamp, m.CreatedAt, m.UpdatedAt, m.Deleted); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
-	stmtArt, _ := tx.Prepare(`
+	stmtArt, err := tx.Prepare(`
 		INSERT INTO artifacts (id, message_id, type, content, file_path, metadata, created_at, updated_at, deleted)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -163,9 +177,16 @@ func HandleSyncPost(w http.ResponseWriter, r *http.Request) {
 			deleted=excluded.deleted
 		WHERE excluded.updated_at > artifacts.updated_at
 	`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	defer stmtArt.Close()
 	for _, a := range req.Artifacts {
-		stmtArt.Exec(a.ID, a.MessageID, a.Type, a.Content, a.FilePath, a.Metadata, a.CreatedAt, a.UpdatedAt, a.Deleted)
+		if _, err := stmtArt.Exec(a.ID, a.MessageID, a.Type, a.Content, a.FilePath, a.Metadata, a.CreatedAt, a.UpdatedAt, a.Deleted); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if req.ClientID != "" {

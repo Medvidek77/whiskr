@@ -173,9 +173,9 @@ func (e *Environment) Init() error {
 		return errors.New("missing tokens.openrouter")
 	}
 
-	// check if exa token is set
-	if e.Tokens.Exa == "" {
-		log.Warnln("Missing token.exa, web search unavailable")
+	// check if exa token or searxng url is set
+	if e.Tokens.Exa == "" && e.Search.SearXNGUrl == "" {
+		log.Warnln("Missing token.exa or search.searxng_url, web search unavailable")
 	}
 
 	// check if github token is set

@@ -3124,7 +3124,7 @@ function clearMessages() {
 	updateChatTokens();
 }
 
-function restore() {
+function restoreGlobalSettings() {
 	const resizedHeight = load("resized");
 
 	if (resizedHeight) {
@@ -3811,14 +3811,26 @@ async function saveChatToStorage(name, skipConfirm = false) {
 	});
 
 	for (const msgData of chatData.messages) {
-		await saveMessage({
+		const message = {
+			id: msgData.id,
 			chat_id: chatId,
 			role: msgData.role,
 			content: msgData.content || msgData.text || "",
 			tokens: msgData.tokens || 0,
-			timestamp: Date.now()
-		});
+			timestamp: msgData.timestamp || Date.now()
+		};
+		if (!message.id) {
+			message.id = uuidv4();
+			msgData.id = message.id; // Assign back so we don't lose it in currentMsgIds
+		}
+		await saveMessage(message);
 	}
+
+	const { db } = await import("./storage.js");
+	const currentMsgIds = chatData.messages.map(m => m.id).filter(Boolean);
+	const oldMsgs = await db.messages.where("chat_id").equals(chatId).toArray();
+	const toDelete = oldMsgs.filter(m => !currentMsgIds.includes(m.id)).map(m => m.id);
+	if (toDelete.length > 0) await db.messages.bulkDelete(toDelete);
 
 	currentChatId = chatId;
 	await renderSavedChats();
@@ -3843,12 +3855,15 @@ async function loadChatFromStorage(id) {
 	currentChatId = id;
 	chatTitle = savedChat.title;
 
-	$model.value = savedChat.model;
-	$prompt.value = savedChat.system_prompt;
+	restoreGlobalSettings();
 
-	restore();
+	if (savedChat.model) $model.value = savedChat.model;
+	if (savedChat.system_prompt) $prompt.value = savedChat.system_prompt;
+
+	$model.dispatchEvent(new Event("change"));
 
 	const mappedMessages = messagesData.map(m => ({
+		id: m.id,
 		role: m.role,
 		text: m.content
 	}));
@@ -4038,6 +4053,7 @@ $model.addEventListener("change", () => {
 		tags = data?.tags || [];
 
 	store("model", model);
+	store("last-used-model", model);
 
 	if (data?.reasoning) {
 		$reasoningEffort.parentNode.classList.remove("none");
@@ -4356,7 +4372,7 @@ $import?.addEventListener("click", async () => {
 		store("messages", data.messages),
 	]);
 
-	restore();
+	restoreGlobalSettings();
 
 	closeSidebar();
 });
@@ -4379,6 +4395,7 @@ $scrolling.addEventListener("click", () => {
 });
 
 $send.addEventListener("click", () => {
+	store("last-used-model", $model.value);
 	generate(true);
 });
 
@@ -4589,7 +4606,7 @@ dropdown($exportFormat);
 exportRolesDropdown = dropdown($exportRoles);
 
 loadData().then(() => {
-	restore();
+	restoreGlobalSettings();
 
 	document.body.classList.remove("loading");
 

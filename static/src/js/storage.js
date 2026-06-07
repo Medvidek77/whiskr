@@ -28,10 +28,48 @@ class StorageDB {
 			outbox: "id++, type, entity_id, action"
 		}).upgrade(async tx => {
 			const kvTable = tx.table("kv");
-			const keys = await kvTable.toCollection().keys();
-			for (const key of keys) {
-				if (key.startsWith("chat-")) {
-					const chatData = (await kvTable.get(key))?.value;
+			const migrationComplete = await kvTable.get("migration-v1-complete");
+			if (migrationComplete && migrationComplete.value === "true") return;
+			const savedChatsRow = await kvTable.get("saved-chats");
+			if (savedChatsRow && savedChatsRow.value) {
+				try {
+					const savedChatsList = typeof savedChatsRow.value === "string" ? JSON.parse(savedChatsRow.value) : savedChatsRow.value;
+					if (Array.isArray(savedChatsList) && savedChatsList.length > 0) {
+						const first = savedChatsList[0];
+						let chatObjects = [];
+						if (typeof first === "object" && first.name && first.data) {
+							chatObjects = savedChatsList;
+						} else if (typeof first === "string") {
+							for (const id of savedChatsList) {
+								const chatRow = await kvTable.get(`chat-${id}`);
+								if (chatRow && chatRow.value) {
+									const val = typeof chatRow.value === "string" ? JSON.parse(chatRow.value) : chatRow.value;
+									chatObjects.push({ name: id, data: val });
+								}
+							}
+						}
+						for (const chatObj of chatObjects) {
+							const chatData = chatObj.data;
+							const chat = {
+								id: chatObj.name || crypto.randomUUID(), title: chatData.title || chatObj.name || "", model: chatData.model || "",
+								system_prompt: chatData.system_prompt || "", created_at: chatData.created_at || Date.now(),
+								updated_at: chatData.updated_at || chatData.updated || Date.now(), deleted: 0
+							};
+							await tx.table("chats").put(chat);
+							if (Array.isArray(chatData.messages)) {
+								for (const msg of chatData.messages) {
+									await tx.table("messages").put({
+										id: msg.id || crypto.randomUUID(), chat_id: chat.id, role: msg.role,
+										content: msg.content || msg.text || "", tokens: msg.tokens || 0, timestamp: msg.timestamp || Date.now(),
+										created_at: msg.timestamp || Date.now(), updated_at: msg.timestamp || Date.now(), deleted: 0
+									});
+								}
+							}
+						}
+					}
+					await kvTable.put({ key: "migration-v1-complete", value: "true", updatedAt: Date.now() });
+				} catch (err) {
+					console.error("Migration failed:", err);
 				}
 			}
 		});
