@@ -131,7 +131,7 @@ server {
 
 ## Usage
 
-- Send a message with `Ctrl+Enter` or the send button.
+- Send a message with `Enter` (or use `Shift+Enter` for a new line) or the send button.
 - Hover over a message to reveal controls to **edit, delete, copy, collapse, or retry**.
 - Click **"Reasoning"** on an assistant message to view the model's thought process or tool usage.
 - Adjust model, temperature, prompt, or message role from the controls in the bottom-left.

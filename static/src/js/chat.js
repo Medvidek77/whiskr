@@ -144,7 +144,8 @@ let autoScrolling = false,
 	chatFilename = false,
 	timeOverride = false;
 
-let searchAvailable = false,
+let currentChatId = null,
+	searchAvailable = false,
 	isResizing = false,
 	scrollResize = false,
 	isUploading = false,
@@ -3868,7 +3869,9 @@ async function loadChatFromStorage(id) {
 		text: m.content
 	}));
 
-	importMessages(mappedMessages);
+	mappedMessages.forEach(msgData => {
+		new Message(msgData);
+	});
 
 	closeSidebar();
 	chatTitleEnabled = true;
@@ -4080,7 +4083,7 @@ $model.addEventListener("change", () => {
 	$messages.classList.toggle("vision", tags.includes("vision"));
 
 	const hasJson = tags.includes("json"),
-		hasSearch = searchAvailable && tags.includes("tools");
+		hasSearch = searchAvailable;
 
 	$json.classList.toggle("none", !hasJson);
 	$search.classList.toggle("none", !hasSearch);
@@ -4484,11 +4487,8 @@ $timeOverride.addEventListener("input", () => {
 });
 
 $message.addEventListener("keydown", event => {
-	if (event.shiftKey) {
-		return;
-	}
-
-	if (event.ctrlKey && event.key === "Enter") {
+	if (event.key === "Enter" && !event.shiftKey) {
+		event.preventDefault();
 		$send.click();
 	}
 });

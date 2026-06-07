@@ -44,3 +44,17 @@ authentication:
   users:
   - username: admin
     password: $2a$12$eH6Du2grC7aOUDmff2SrC.yKPWea/fq0d76c3JsvhGxhGCEOnWTRy
+
+search:
+  # SearXNG instance URL (e.g., http://localhost:8888)
+  searxng_url: ""
+  # maximum number of search results (default 10)
+  max_results: 10
+  summarization:
+    # summarize search results using an LLM
+    enabled: true
+    model: "google/gemini-2.5-flash-lite"
+    max_tokens_per_result: 200
+  content_trimming:
+    # truncate raw content before summarization
+    max_chars: 1500
