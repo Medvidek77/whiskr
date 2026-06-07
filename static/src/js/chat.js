@@ -4083,7 +4083,7 @@ $model.addEventListener("change", () => {
 	$messages.classList.toggle("vision", tags.includes("vision"));
 
 	const hasJson = tags.includes("json"),
-		hasSearch = searchAvailable && tags.includes("tools");
+		hasSearch = searchAvailable;
 
 	$json.classList.toggle("none", !hasJson);
 	$search.classList.toggle("none", !hasSearch);
